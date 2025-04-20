@@ -1,4 +1,3 @@
-
 # 🛠️ Custom Armbian Image for d00t and Open Duck Mini V2
 
 This repo builds a fully preconfigured Armbian image for the Radxa Zero 3W (or 3E) with all the robotics-friendly features enabled out-of-the-box.
@@ -20,6 +19,26 @@ repo/
 ```
 
 ## 🚀 Build & Flash
+
+### Prerequisites
+
+#### Linux
+- Git, curl, wget
+- Build essentials (gcc, make, etc.)
+- Python3
+- QEMU
+- Device Tree Compiler (dtc)
+- Cross-compilation tools
+
+#### macOS
+- Homebrew package manager
+- Git, curl, wget (via Homebrew)
+- GCC, make (via Homebrew)
+- Python3 (via Homebrew)
+- QEMU (via Homebrew)
+- Device Tree Compiler (via Homebrew)
+- Cross-compilation tools (via Homebrew tap: messense/macos-cross-toolchains)
+
 ### 1. Clone This Repo & Init
 ```bash
 git clone --recurse-submodules https://github.com/Aronnaxx/d00t-armbian-radxa-zero3W.git 
@@ -34,9 +53,18 @@ chmod +x setup.sh
 The image will be built under `build/output/images/`. Flash it with `dd`, Etcher, or Raspberry Pi Imager.
 
 ### 3. Flash to SD or eMMC
+
+#### Linux
 ```bash
 xz -d Armbian_*_Radxa-zero3*.img.xz
 sudo dd if=Armbian_*.img of=/dev/sdX bs=1M status=progress && sync
+```
+
+#### macOS
+```bash
+xz -d Armbian_*_Radxa-zero3*.img.xz
+# Replace /dev/rdiskN with your SD card device (use diskutil list to find it)
+sudo dd if=Armbian_*.img of=/dev/rdiskN bs=1m && sync
 ```
 
 ### 4. First Boot
@@ -65,12 +93,16 @@ i2cdetect -y 0          # scan bus 0
 ## 🧭 Build Process Diagram
 ```mermaid
 graph TD
-    A[Run setup.sh] --> B[Clone Armbian Build Repo]
-    B --> C[Symlink customize-image.sh into userpatches/]
-    C --> D[Init radxa-overlays submodule]
-    D --> E[Run compile.sh with board flags]
-    E --> F[Inject Wi-Fi, BT, GPIO, Ollama, Repo Clone]
-    F --> G[Output custom .img file ready to flash]
+    A[Run setup.sh] --> B[Detect OS]
+    B --> C1[Linux: Install apt packages]
+    B --> C2[macOS: Install Homebrew packages]
+    C1 --> D[Clone Armbian Build Repo]
+    C2 --> D
+    D --> E[Symlink customize-image.sh into userpatches/]
+    E --> F[Init radxa-overlays submodule]
+    F --> G[Run compile.sh with board flags]
+    G --> H[Inject Wi-Fi, BT, GPIO, Ollama, Repo Clone]
+    H --> I[Output custom .img file ready to flash]
 ```
 
 ---

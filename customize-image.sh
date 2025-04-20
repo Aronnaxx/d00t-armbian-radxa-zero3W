@@ -3,28 +3,86 @@
 
 set -e
 
-echo "Customizing image for Radxa Zero 3W with Wi-Fi, BT, GPIO, Ollama, and repo support."
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Function to print status messages
+print_status() {
+    echo -e "${GREEN}==>${NC} $1"
+}
+
+# Function to print error messages and exit
+print_error() {
+    echo -e "${RED}ERROR:${NC} $1"
+    exit 1
+}
+
+# Function to print warning messages
+print_warning() {
+    echo -e "${YELLOW}WARNING:${NC} $1"
+}
+
+# Function to detect OS
+detect_os() {
+    case "$(uname -s)" in
+        Darwin*)    echo "macos";;
+        Linux*)     echo "linux";;
+        *)          echo "unknown";;
+    esac
+}
+
+print_status "Customizing image for Radxa Zero 3W with Wi-Fi, BT, GPIO, Ollama, and repo support."
+
+OS=$(detect_os)
 
 # 1. Enable Wi-Fi and Bluetooth – install firmware and drivers for Zero 3W
-apt-get update
-apt-get install -y network-manager bluez python3-libgpiod git i2c-tools gpiod device-tree-compiler wget curl
-systemctl enable NetworkManager.service
+print_status "Updating package list and installing base dependencies..."
+if ! apt-get update; then
+    print_error "Failed to update package list"
+fi
 
-# Radxa AIC8800 Wi-Fi/BT firmware (ignore failure if already installed)
-wget -q https://github.com/radxa-pkg/aic8800/releases/download/3.0%2Bgit20240327.3561b08f-4/aic8800-firmware_3.0+git20240327.3561b08f-4_all.deb
-wget -q https://github.com/radxa-pkg/aic8800/releases/download/3.0%2Bgit20240327.3561b08f-4/aic8800-sdio-dkms_3.0+git20240327.3561b08f-4_all.deb
-wget -q https://github.com/radxa-pkg/aic8800/releases/download/3.0%2Bgit20240327.3561b08f-4/aicrf-test_3.0+git20240327.3561b08f-4_arm64.deb
+if ! apt-get install -y network-manager bluez python3-libgpiod git i2c-tools gpiod device-tree-compiler wget curl; then
+    print_error "Failed to install base packages"
+fi
 
-dpkg -i aic8800-*.deb || true
+if ! systemctl enable NetworkManager.service; then
+    print_warning "Failed to enable NetworkManager service"
+fi
+
+# Radxa AIC8800 Wi-Fi/BT firmware
+print_status "Installing AIC8800 Wi-Fi/BT firmware..."
+FIRMWARE_VERSION="3.0+git20240327.3561b08f-4"
+FIRMWARE_URL="https://github.com/radxa-pkg/aic8800/releases/download/${FIRMWARE_VERSION}"
+
+for pkg in aic8800-firmware aic8800-sdio-dkms aicrf-test; do
+    if ! wget -q "${FIRMWARE_URL}/${pkg}_${FIRMWARE_VERSION}_all.deb"; then
+        print_warning "Failed to download ${pkg}"
+    fi
+done
+
+if ! dpkg -i aic8800-*.deb; then
+    print_warning "Some AIC8800 packages failed to install, but continuing..."
+fi
+
 rm -f aic8800-*.deb
 
-# 2. Compile and enable USB OTG Host-mode overlay from radxa-overlays submodule
-dtc -I dts -O dtb -@ \
-  -o /boot/dtb/rockchip/overlays/rk3568-dwc3-host.dtbo \
-  /root/radxa-overlays/arch/arm64/boot/dts/rockchip/overlays/rk3568-dwc3-host.dts
+# 2. Compile and enable USB OTG Host-mode overlay
+print_status "Setting up USB OTG Host-mode overlay..."
+if ! dtc -I dts -O dtb -@ \
+    -o /boot/dtb/rockchip/overlays/rk3568-dwc3-host.dtbo \
+    /root/radxa-overlays/arch/arm64/boot/dts/rockchip/overlays/rk3568-dwc3-host.dts; then
+    print_error "Failed to compile device tree overlay"
+fi
 
 # Enable overlays for USB Host, I2C, and GPIO
-grep -q '^overlays=' /boot/armbianEnv.txt && sed -i '/^overlays=/d' /boot/armbianEnv.txt
+print_status "Configuring device tree overlays..."
+if ! grep -q '^overlays=' /boot/armbianEnv.txt; then
+    sed -i '' '/^overlays=/d' /boot/armbianEnv.txt 2>/dev/null || sed -i '/^overlays=/d' /boot/armbianEnv.txt
+fi
+
 cat >> /boot/armbianEnv.txt <<EOT
 overlays=rk3568-dwc3-host i2c1 i2c3
 param_i2c1=on
@@ -35,6 +93,7 @@ EOT
 echo "i2c-dev" >> /etc/modules
 
 # 3. Bluetooth UART setup
+print_status "Configuring Bluetooth UART..."
 cat > /etc/systemd/system/btattach.service << 'EOT'
 [Unit]
 Description=Attach Bluetooth adapter (Radxa Zero 3W)
@@ -44,25 +103,44 @@ After=dev-ttyS1.device
 Type=simple
 ExecStart=/usr/bin/hciattach -s 1500000 /dev/ttyS1 any 1500000 flow
 Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOT
 
-ln -s /etc/systemd/system/btattach.service /etc/systemd/system/multi-user.target.wants/btattach.service
+if ! ln -sf /etc/systemd/system/btattach.service /etc/systemd/system/multi-user.target.wants/btattach.service; then
+    print_warning "Failed to enable btattach service"
+fi
 
 # 4. Install Ollama and configure it as a systemd service
+print_status "Installing Ollama..."
 OLLAMA_URL="https://ollama.com/download/ollama-linux-arm64.tgz"
-wget -q -O /tmp/ollama.tgz "$OLLAMA_URL"
-mkdir -p /usr/lib/ollama
- tar -xzf /tmp/ollama.tgz -C /usr/lib/ollama
-ln -s /usr/lib/ollama/ollama /usr/bin/ollama
-rm /tmp/ollama.tgz
+OLLAMA_DIR="/usr/lib/ollama"
 
-useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama
+if ! wget -q -O /tmp/ollama.tgz "$OLLAMA_URL"; then
+    print_error "Failed to download Ollama"
+fi
+
+if ! mkdir -p "$OLLAMA_DIR"; then
+    print_error "Failed to create Ollama directory"
+fi
+
+if ! tar -xzf /tmp/ollama.tgz -C "$OLLAMA_DIR"; then
+    print_error "Failed to extract Ollama"
+fi
+
+ln -sf "$OLLAMA_DIR/ollama" /usr/bin/ollama
+rm -f /tmp/ollama.tgz
+
+# Create Ollama user and group
+if ! useradd -r -s /bin/false -U -m -d /usr/share/ollama ollama; then
+    print_warning "Ollama user may already exist"
+fi
+
 usermod -a -G ollama root
-sudo -u ollama /usr/bin/ollama --setup
 
+# Configure Ollama service
 cat > /etc/systemd/system/ollama.service << 'EOT'
 [Unit]
 Description=Ollama LLM Service
@@ -73,19 +151,35 @@ User=ollama
 Group=ollama
 ExecStart=/usr/bin/ollama serve
 Restart=on-failure
+RestartSec=5
+Environment=OLLAMA_HOST=0.0.0.0
 
 [Install]
 WantedBy=multi-user.target
 EOT
 
-ln -s /etc/systemd/system/ollama.service /etc/systemd/system/multi-user.target.wants/ollama.service
+if ! ln -sf /etc/systemd/system/ollama.service /etc/systemd/system/multi-user.target.wants/ollama.service; then
+    print_warning "Failed to enable Ollama service"
+fi
 
-# 5. Create a user and clone the Open Duck Mini Runtime
-useradd -m -G sudo,dialout,gpio -s /bin/bash robot
- echo "robot:robot" | chpasswd
-sed -i 's/ENABLED=1/ENABLED=0/' /etc/default/armbian-firstboot-config || true
+# 5. Create robot user and clone the Open Duck Mini Runtime
+print_status "Setting up robot user and repository..."
+if ! useradd -m -G sudo,dialout,gpio -s /bin/bash robot; then
+    print_warning "Robot user may already exist"
+fi
 
-sudo -u robot git clone https://github.com/apirrone/Open_Duck_Mini_Runtime.git /home/robot/Open_Duck_Mini_Runtime
+echo "robot:robot" | chpasswd
+sed -i '' 's/ENABLED=1/ENABLED=0/' /etc/default/armbian-firstboot-config 2>/dev/null || sed -i 's/ENABLED=1/ENABLED=0/' /etc/default/armbian-firstboot-config || true
+
+if ! sudo -u robot git clone https://github.com/apirrone/Open_Duck_Mini_Runtime.git /home/robot/Open_Duck_Mini_Runtime; then
+    print_warning "Failed to clone Open Duck Mini Runtime repository"
+fi
+
 chown -R robot:robot /home/robot/Open_Duck_Mini_Runtime
 
+# Clean up
+print_status "Cleaning up..."
 apt-get clean
+rm -rf /var/lib/apt/lists/*
+
+print_status "✅ Image customization completed successfully!"
