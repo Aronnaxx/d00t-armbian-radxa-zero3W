@@ -1,0 +1,3 @@
+[submodule "submodule/radxa-overlays"]
+	path = submodule/radxa-overlays
+	url = https://github.com/radxa-pkg/radxa-overlays.git
