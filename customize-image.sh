@@ -34,6 +34,17 @@ detect_os() {
     esac
 }
 
+# Function to create system group if it doesn't exist
+create_group_if_missing() {
+    local group_name="$1"
+    if ! getent group "$group_name" > /dev/null; then
+        print_status "Creating group: $group_name"
+        groupadd "$group_name" || print_warning "Failed to create group $group_name"
+    else
+        print_status "Group $group_name already exists"
+    fi
+}
+
 print_status "Customizing image for Radxa Zero 3W with Wi-Fi, BT, GPIO, Ollama, and repo support."
 
 OS=$(detect_os)
@@ -68,15 +79,6 @@ if ! dpkg -i aic8800-*.deb; then
 fi
 
 rm -f aic8800-*.deb
-
-# 2. Compile and enable USB OTG Host-mode overlay
-print_status "Setting up USB OTG Host-mode overlay..."
-if ! dtc -I dts -O dtb -@ \
-    -o /boot/dtb/rockchip/overlays/rk3568-dwc3-host.dtbo \
-    /root/radxa-overlays/arch/arm64/boot/dts/rockchip/overlays/rk3568-dwc3-host.dts; then
-    print_error "Failed to compile device tree overlay"
-fi
-
 # Enable overlays for USB Host, I2C, and GPIO
 print_status "Configuring device tree overlays..."
 if ! grep -q '^overlays=' /boot/armbianEnv.txt; then
@@ -162,20 +164,45 @@ if ! ln -sf /etc/systemd/system/ollama.service /etc/systemd/system/multi-user.ta
     print_warning "Failed to enable Ollama service"
 fi
 
-# 5. Create robot user and clone the Open Duck Mini Runtime
+# 5. Create required groups and robot user
+print_status "Setting up system groups..."
+create_group_if_missing "gpio"
+create_group_if_missing "i2c"
+create_group_if_missing "spi"
+
 print_status "Setting up robot user and repository..."
-if ! useradd -m -G sudo,dialout,gpio -s /bin/bash robot; then
-    print_warning "Robot user may already exist"
+if ! id robot &>/dev/null; then
+    print_status "Creating robot user..."
+    if ! useradd -m -G sudo,dialout,gpio,i2c,spi -s /bin/bash robot; then
+        print_error "Failed to create robot user"
+    fi
+    
+    print_status "Setting robot user password..."
+    if ! echo "robot:robot" | chpasswd; then
+        print_error "Failed to set robot user password"
+    fi
+else
+    print_status "Robot user already exists, ensuring correct group membership..."
+    usermod -a -G sudo,dialout,gpio,i2c,spi robot || print_warning "Failed to update robot user groups"
 fi
 
-echo "robot:robot" | chpasswd
-sed -i '' 's/ENABLED=1/ENABLED=0/' /etc/default/armbian-firstboot-config 2>/dev/null || sed -i 's/ENABLED=1/ENABLED=0/' /etc/default/armbian-firstboot-config || true
-
-if ! sudo -u robot git clone https://github.com/apirrone/Open_Duck_Mini_Runtime.git /home/robot/Open_Duck_Mini_Runtime; then
-    print_warning "Failed to clone Open Duck Mini Runtime repository"
+# Ensure firstboot config is disabled
+print_status "Disabling firstboot configuration..."
+if [ -f /etc/default/armbian-firstboot-config ]; then
+    sed -i 's/ENABLED=1/ENABLED=0/' /etc/default/armbian-firstboot-config || print_warning "Failed to disable firstboot config"
 fi
 
-chown -R robot:robot /home/robot/Open_Duck_Mini_Runtime
+# Clone repository with better error handling
+print_status "Cloning Open Duck Mini Runtime repository..."
+REPO_PATH="/home/robot/Open_Duck_Mini_Runtime"
+if [ ! -d "$REPO_PATH" ]; then
+    if ! sudo -u robot git clone https://github.com/apirrone/Open_Duck_Mini_Runtime.git "$REPO_PATH"; then
+        print_error "Failed to clone Open Duck Mini Runtime repository"
+    fi
+    chown -R robot:robot "$REPO_PATH" || print_warning "Failed to set repository ownership"
+else
+    print_status "Repository already exists at $REPO_PATH"
+fi
 
 # Clean up
 print_status "Cleaning up..."
