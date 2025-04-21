@@ -125,7 +125,7 @@ cp submodule/radxa-overlays/arch/arm64/boot/dts/rockchip/overlays/rock-5t-cam1-r
 # Copy customize-image.sh
 cp customize-image.sh submodule/build/userpatches/customize-image.sh
 
+cp config.conf submodule/build/userpatches/config.conf
+
 # Compile the image
-./submodule/build/compile.sh BOARD=radxa-zero3 BRANCH=current RELEASE=bookworm \
-     BUILD_MINIMAL=yes BUILD_DESKTOP=no KERNEL_CONFIGURE=no \
-     COMPRESS_OUTPUT_IMAGE=sha,img
+./submodule/build/compile.sh
