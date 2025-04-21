@@ -1,3 +1,6 @@
 [submodule "submodule/radxa-overlays"]
 	path = submodule/radxa-overlays
 	url = https://github.com/radxa-pkg/radxa-overlays.git
+[submodule "submodule/build"]
+	path = submodule/build
+	url = https://github.com/armbian/build.git

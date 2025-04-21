@@ -7,6 +7,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Set Docker host to use system socket
+export DOCKER_HOST="unix:///var/run/docker.sock"
+
 # Function to print status messages
 print_status() {
     echo -e "${GREEN}==>${NC} $1"
@@ -112,41 +115,17 @@ else
     print_error "Unsupported operating system"
 fi
 
-# Clone Armbian build repo
-if [ ! -d "build" ]; then
-    print_status "Cloning Armbian build repository..."
-    if ! git clone --depth=1 https://github.com/armbian/build.git; then
-        print_error "Failed to clone Armbian build repository"
-    fi
-fi
 
-cd build || print_error "Failed to change to build directory"
+mkdir -p submodule/build/userpatches/overlay
 
-# Clone your custom config repo into userpatches
-if [ ! -d "userpatches" ]; then
-    print_status "Setting up userpatches..."
-    if ! ln -s ../repo userpatches; then
-        print_error "Failed to create userpatches symlink"
-    fi
-fi
+# Copy overlay files
+cp submodule/radxa-overlays/arch/arm64/boot/dts/rockchip/overlays/rk3568-dwc3-host.dts submodule/build/userpatches/overlay/
+cp submodule/radxa-overlays/arch/arm64/boot/dts/rockchip/overlays/rock-5t-cam1-radxa-camera-8m-219.dts submodule/build/userpatches/overlay/
 
-# Init submodules (Radxa overlays)
-cd ../repo || print_error "Failed to change to repo directory"
+# Copy customize-image.sh
+cp customize-image.sh submodule/build/userpatches/customize-image.sh
 
-if [ ! -f .gitmodules ]; then
-    print_status "Adding radxa-overlays as submodule..."
-    if ! git submodule add https://github.com/radxa-pkg/radxa-overlays.git; then
-        print_error "Failed to add radxa-overlays submodule"
-    fi
-fi
-
-print_status "Initializing and updating submodules..."
-if ! git submodule update --init --recursive; then
-    print_error "Failed to initialize submodules"
-fi
-
-cd ../build || print_error "Failed to return to build directory"
-
-print_status "✅ Setup completed successfully!"
-print_status "You can now proceed with building the image using:"
-echo "cd build && ./compile.sh"
+# Compile the image
+./submodule/build/compile.sh BOARD=radxa-zero3 BRANCH=current RELEASE=bookworm \
+     BUILD_MINIMAL=yes BUILD_DESKTOP=no KERNEL_CONFIGURE=no \
+     COMPRESS_OUTPUT_IMAGE=sha,img
